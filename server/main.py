@@ -7,7 +7,6 @@ from typing import Optional, Union
 import database
 from config import AUTH_TOKEN, EMBEDDING_MODEL
 from models import (
-    TaskCreate,
     TaskResponse,
     TaskResult,
     WorkerCompleteRequest,
@@ -15,7 +14,6 @@ from models import (
     EmbeddingData,
     OpenAIEmbeddingResponse,
     OpenAIEmbeddingRequest,
-    AsyncTaskResponse,
 )
 
 app = FastAPI(title="Embedding Queue API")
@@ -37,44 +35,6 @@ def verify_token(authorization: str = Header(...)) -> str:
 
 
 # Client endpoints
-
-@app.post("/tasks", response_model=Union[dict, OpenAIEmbeddingResponse, AsyncTaskResponse])
-async def create_task(task: TaskCreate, token: str = Depends(verify_token)):
-    """Submit a text for embedding.
-
-    If wait_seconds is provided, waits up to that many seconds for the result.
-    Returns OpenAI-compatible embedding format on success, or async task response on timeout.
-    """
-    task_id = database.create_task(task.text)
-
-    if task.wait_seconds and task.wait_seconds > 0:
-        # Long polling - wait for result
-        max_wait = min(task.wait_seconds, 30)  # Cap at 30 seconds
-        deadline = time.time() + max_wait
-
-        while time.time() < deadline:
-            result = database.get_task(task_id)
-
-            if result["status"] == "completed":
-                embedding = json.loads(result["embedding"])
-                database.delete_task(task_id)
-                return OpenAIEmbeddingResponse(
-                    data=[EmbeddingData(embedding=embedding)],
-                    model=EMBEDDING_MODEL
-                )
-            elif result["status"] == "failed":
-                error_msg = result["error"] or "Unknown error"
-                database.delete_task(task_id)
-                raise HTTPException(status_code=500, detail=error_msg)
-
-            await asyncio.sleep(0.2)
-
-        # Timeout - return async response
-        return AsyncTaskResponse(id=task_id)
-
-    # No wait - return task ID immediately
-    return {"id": task_id}
-
 
 @app.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task(task_id: str, token: str = Depends(verify_token)):
@@ -157,7 +117,7 @@ def health():
 
 # OpenAI-compatible endpoint
 
-@app.post("/v1/embeddings", response_model=Union[OpenAIEmbeddingResponse, AsyncTaskResponse])
+@app.post("/v1/embeddings", response_model=Union[OpenAIEmbeddingResponse, dict])
 async def openai_embeddings(request: OpenAIEmbeddingRequest, token: str = Depends(verify_token)):
     """OpenAI-compatible embeddings endpoint.
 
@@ -166,6 +126,9 @@ async def openai_embeddings(request: OpenAIEmbeddingRequest, token: str = Depend
 
     Response (OpenAI format):
         {"object": "list", "data": [{"embedding": [...]}], "model": "..."}
+
+    On timeout:
+        {"id": "task-id"} - poll GET /tasks/{id} for result
     """
     task_id = database.create_task(request.input)
     wait_seconds = request.wait_seconds if request.wait_seconds is not None else 10
@@ -191,8 +154,5 @@ async def openai_embeddings(request: OpenAIEmbeddingRequest, token: str = Depend
 
             await asyncio.sleep(0.2)
 
-        # Timeout - return async response
-        return AsyncTaskResponse(id=task_id)
-
-    # No wait - return async response immediately
-    return AsyncTaskResponse(id=task_id)
+    # Timeout or no wait - return task ID for polling
+    return {"id": task_id}

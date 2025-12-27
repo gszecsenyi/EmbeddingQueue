@@ -77,20 +77,8 @@ embedding = response.data[0].embedding
 }
 ```
 
-The server waits up to 10 seconds for the result. If processing takes longer, it returns a task ID for async polling.
+The server waits up to 10 seconds for the result. If processing takes longer, it returns a task ID:
 
-### Async Mode (optional)
-
-For fire-and-forget style, use the `/tasks` endpoint:
-
-```bash
-curl -X POST http://localhost:8000/tasks \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Hello world"}'
-```
-
-Response:
 ```json
 {"id": "550e8400-e29b-41d4-a716-446655440000"}
 ```
@@ -107,8 +95,7 @@ curl http://localhost:8000/tasks/550e8400-e29b-41d4-a716-446655440000 \
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/v1/embeddings` | **OpenAI-compatible** - sync with long polling |
-| `POST` | `/tasks` | Async - returns task ID immediately |
-| `GET` | `/tasks/{id}` | Get task status and result |
+| `GET` | `/tasks/{id}` | Get task status and result (for polling) |
 | `GET` | `/tasks/{id}/result` | Get only the embedding |
 | `GET` | `/health` | Health check |
 
