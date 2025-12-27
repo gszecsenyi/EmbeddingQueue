@@ -40,8 +40,21 @@ def get_connection():
         conn.close()
 
 
+def cleanup_old_tasks() -> int:
+    """Delete tasks older than 1 hour. Returns number of deleted tasks."""
+    with get_connection() as conn:
+        result = conn.execute(
+            "DELETE FROM tasks WHERE created_at < datetime('now', '-1 hour')"
+        )
+        conn.commit()
+        return result.rowcount
+
+
 def create_task(text: str) -> str:
-    """Create a new task and return its ID."""
+    """Create a new task and return its ID. Also cleans up old tasks."""
+    # Cleanup old tasks (older than 1 hour)
+    cleanup_old_tasks()
+
     task_id = str(uuid.uuid4())
     with get_connection() as conn:
         conn.execute(
