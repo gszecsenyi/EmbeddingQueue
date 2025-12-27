@@ -107,3 +107,14 @@ def fail_task(task_id: str, error: str) -> bool:
         )
         conn.commit()
         return result.rowcount > 0
+
+
+def delete_task(task_id: str) -> bool:
+    """Delete a task from the database."""
+    with get_connection() as conn:
+        result = conn.execute(
+            "DELETE FROM tasks WHERE id = ?",
+            (task_id,)
+        )
+        conn.commit()
+        return result.rowcount > 0

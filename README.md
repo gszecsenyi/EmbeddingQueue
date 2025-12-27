@@ -41,23 +41,53 @@ docker-compose up --build
 docker exec -it embeddingqueue-ollama-1 ollama pull nomic-embed-text
 ```
 
-### 3. Submit a text for embedding
+### 3. Get embeddings (OpenAI-compatible)
 
-**PowerShell:**
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8000/tasks" `
-  -Method POST `
-  -Headers @{ "Authorization" = "Bearer your-secret-token" } `
-  -ContentType "application/json" `
-  -Body '{"text": "The quick brown fox jumps over the lazy dog"}'
+**curl:**
+```bash
+curl -X POST http://localhost:8000/v1/embeddings \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{"input": "The quick brown fox jumps over the lazy dog", "model": "nomic-embed-text"}'
 ```
 
-**Bash/curl:**
+**Python (OpenAI SDK):**
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your-secret-token",
+    base_url="http://localhost:8000/v1"
+)
+
+response = client.embeddings.create(
+    input="The quick brown fox jumps over the lazy dog",
+    model="nomic-embed-text"
+)
+
+embedding = response.data[0].embedding
+```
+
+**Response (OpenAI format):**
+```json
+{
+  "object": "list",
+  "data": [{"object": "embedding", "embedding": [0.123, -0.456, ...], "index": 0}],
+  "model": "nomic-embed-text"
+}
+```
+
+The server waits up to 10 seconds for the result. If processing takes longer, it returns a task ID for async polling.
+
+### Async Mode (optional)
+
+For fire-and-forget style, use the `/tasks` endpoint:
+
 ```bash
 curl -X POST http://localhost:8000/tasks \
   -H "Authorization: Bearer your-secret-token" \
   -H "Content-Type: application/json" \
-  -d '{"text": "The quick brown fox jumps over the lazy dog"}'
+  -d '{"text": "Hello world"}'
 ```
 
 Response:
@@ -65,47 +95,46 @@ Response:
 {"id": "550e8400-e29b-41d4-a716-446655440000"}
 ```
 
-### 4. Check the result
+Then poll for the result:
 
-**PowerShell:**
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8000/tasks/550e8400-e29b-41d4-a716-446655440000" `
-  -Headers @{ "Authorization" = "Bearer your-secret-token" }
-```
-
-Response:
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "text": "The quick brown fox jumps over the lazy dog",
-  "status": "completed",
-  "embedding": [0.123, -0.456, 0.789, ...],
-  "error": null,
-  "created_at": "2024-01-15T10:30:00",
-  "updated_at": "2024-01-15T10:30:05"
-}
+```bash
+curl http://localhost:8000/tasks/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer your-secret-token"
 ```
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/tasks` | Submit text for embedding |
+| `POST` | `/v1/embeddings` | **OpenAI-compatible** - sync with long polling |
+| `POST` | `/tasks` | Async - returns task ID immediately |
 | `GET` | `/tasks/{id}` | Get task status and result |
 | `GET` | `/tasks/{id}/result` | Get only the embedding |
 | `GET` | `/health` | Health check |
 
 All endpoints require `Authorization: Bearer your-secret-token` header.
 
+### OpenAI Endpoint Details
+
+`POST /v1/embeddings`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `input` | string | required | Text to embed |
+| `model` | string | `nomic-embed-text` | Model name (optional) |
+| `wait_seconds` | int | `10` | Max wait time (0 = async mode) |
+
 ## Configuration
 
-Edit `docker-compose.yml` to customize:
+Edit `.env` file to customize:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AUTH_TOKEN` | `your-secret-token` | API authentication token |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama model to use |
 | `POLL_INTERVAL` | `2` | Worker poll frequency (seconds) |
+| `SERVER_PORT` | `8000` | Server port |
+| `DB_PATH` | `data/embedding_queue.db` | SQLite database path |
 
 ## Requirements
 
@@ -126,6 +155,7 @@ EmbeddingQueue/
 │   ├── embedder.py   # Ollama client
 │   └── config.py     # Configuration
 ├── docker-compose.yml
+├── .env              # Environment variables
 └── data/             # SQLite database (persistent)
 ```
 
