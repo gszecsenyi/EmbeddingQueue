@@ -1,11 +1,5 @@
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime
-
-
-class TaskCreate(BaseModel):
-    text: str
-    wait_seconds: Optional[int] = None
 
 
 class EmbeddingData(BaseModel):
@@ -20,13 +14,6 @@ class OpenAIEmbeddingResponse(BaseModel):
     model: str
 
 
-class AsyncTaskResponse(BaseModel):
-    id: str
-    status: str = "processing"
-    message: str = "Task queued for async processing"
-
-
-# OpenAI-compatible request model
 class OpenAIEmbeddingRequest(BaseModel):
     input: str  # text to embed
     model: Optional[str] = None  # optional, uses server default

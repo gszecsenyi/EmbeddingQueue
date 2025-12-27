@@ -2,7 +2,7 @@ import json
 import time
 import asyncio
 from fastapi import FastAPI, HTTPException, Depends, Header
-from typing import Optional, Union
+from typing import Union
 
 import database
 from config import AUTH_TOKEN, EMBEDDING_MODEL
