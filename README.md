@@ -77,7 +77,7 @@ embedding = response.data[0].embedding
 }
 ```
 
-The server waits up to 10 seconds for the result. If processing takes longer, it returns a task ID:
+The server waits for the result (default 10 seconds, max 30 seconds). If processing takes longer, it returns a task ID:
 
 ```json
 {"id": "550e8400-e29b-41d4-a716-446655440000"}
@@ -109,7 +109,7 @@ All endpoints require `Authorization: Bearer your-secret-token` header.
 |-------|------|---------|-------------|
 | `input` | string | required | Text to embed |
 | `model` | string | `nomic-embed-text` | Model name (optional) |
-| `wait_seconds` | int | `10` | Max wait time (0 = async mode) |
+| `wait_seconds` | int | `10` | Wait time in seconds (0 = return ID immediately, max 30) |
 
 ## Configuration
 

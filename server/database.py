@@ -65,22 +65,32 @@ def get_task(task_id: str) -> Optional[dict]:
 
 
 def claim_next_task() -> Optional[dict]:
-    """Atomically claim the next pending task for processing."""
+    """Atomically claim the next pending task for processing.
+
+    Uses conditional UPDATE to prevent race conditions - if another worker
+    claims the task between SELECT and UPDATE, rowcount will be 0.
+    """
     with get_connection() as conn:
+        # Find a pending task
         row = conn.execute(
-            "SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at LIMIT 1"
+            "SELECT id, text FROM tasks WHERE status = 'pending' ORDER BY created_at LIMIT 1"
         ).fetchone()
 
-        if row:
-            task = dict(row)
-            conn.execute(
-                "UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?",
-                (datetime.utcnow().isoformat(), task["id"])
-            )
-            conn.commit()
-            task["status"] = "processing"
-            return task
-    return None
+        if not row:
+            return None
+
+        # Atomically claim ONLY if still pending (prevents race condition)
+        result = conn.execute(
+            "UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ? AND status = 'pending'",
+            (datetime.utcnow().isoformat(), row["id"])
+        )
+        conn.commit()
+
+        # If rowcount is 0, another worker claimed it first
+        if result.rowcount == 0:
+            return None
+
+        return {"id": row["id"], "text": row["text"], "status": "processing"}
 
 
 def complete_task(task_id: str, embedding: list[float]) -> bool:
