@@ -1,0 +1,109 @@
+import sqlite3
+import uuid
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+from contextlib import contextmanager
+
+from config import DB_PATH
+
+
+def init_db():
+    """Initialize the database and create tables if they don't exist."""
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+
+    with get_connection() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                text TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                embedding TEXT,
+                error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+        conn.commit()
+
+
+@contextmanager
+def get_connection():
+    """Context manager for database connections."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def create_task(text: str) -> str:
+    """Create a new task and return its ID."""
+    task_id = str(uuid.uuid4())
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO tasks (id, text) VALUES (?, ?)",
+            (task_id, text)
+        )
+        conn.commit()
+    return task_id
+
+
+def get_task(task_id: str) -> Optional[dict]:
+    """Get a task by ID."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM tasks WHERE id = ?",
+            (task_id,)
+        ).fetchone()
+        if row:
+            return dict(row)
+    return None
+
+
+def claim_next_task() -> Optional[dict]:
+    """Atomically claim the next pending task for processing."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at LIMIT 1"
+        ).fetchone()
+
+        if row:
+            task = dict(row)
+            conn.execute(
+                "UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?",
+                (datetime.utcnow().isoformat(), task["id"])
+            )
+            conn.commit()
+            task["status"] = "processing"
+            return task
+    return None
+
+
+def complete_task(task_id: str, embedding: list[float]) -> bool:
+    """Mark a task as completed with its embedding result."""
+    with get_connection() as conn:
+        result = conn.execute(
+            """UPDATE tasks
+               SET status = 'completed', embedding = ?, updated_at = ?
+               WHERE id = ? AND status = 'processing'""",
+            (json.dumps(embedding), datetime.utcnow().isoformat(), task_id)
+        )
+        conn.commit()
+        return result.rowcount > 0
+
+
+def fail_task(task_id: str, error: str) -> bool:
+    """Mark a task as failed with an error message."""
+    with get_connection() as conn:
+        result = conn.execute(
+            """UPDATE tasks
+               SET status = 'failed', error = ?, updated_at = ?
+               WHERE id = ? AND status = 'processing'""",
+            (error, datetime.utcnow().isoformat(), task_id)
+        )
+        conn.commit()
+        return result.rowcount > 0
