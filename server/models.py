@@ -1,10 +1,23 @@
 from pydantic import BaseModel
-from typing import Optional
-from datetime import datetime
+from typing import Optional, List
 
 
-class TaskCreate(BaseModel):
-    text: str
+class EmbeddingData(BaseModel):
+    object: str = "embedding"
+    embedding: List[float]
+    index: int = 0
+
+
+class OpenAIEmbeddingResponse(BaseModel):
+    object: str = "list"
+    data: List[EmbeddingData]
+    model: str
+
+
+class OpenAIEmbeddingRequest(BaseModel):
+    input: str  # text to embed
+    model: Optional[str] = None  # optional, uses server default
+    wait_seconds: Optional[int] = 10  # extension: async support (default 10s)
 
 
 class TaskResponse(BaseModel):

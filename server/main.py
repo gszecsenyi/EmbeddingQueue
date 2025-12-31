@@ -1,15 +1,19 @@
 import json
+import time
+import asyncio
 from fastapi import FastAPI, HTTPException, Depends, Header
-from typing import Optional
+from typing import Union
 
 import database
-from config import AUTH_TOKEN
+from config import AUTH_TOKEN, EMBEDDING_MODEL
 from models import (
-    TaskCreate,
     TaskResponse,
     TaskResult,
     WorkerCompleteRequest,
     WorkerFailRequest,
+    EmbeddingData,
+    OpenAIEmbeddingResponse,
+    OpenAIEmbeddingRequest,
 )
 
 app = FastAPI(title="Embedding Queue API")
@@ -31,13 +35,6 @@ def verify_token(authorization: str = Header(...)) -> str:
 
 
 # Client endpoints
-
-@app.post("/tasks", response_model=dict)
-def create_task(task: TaskCreate, token: str = Depends(verify_token)):
-    """Submit a text for embedding."""
-    task_id = database.create_task(task.text)
-    return {"id": task_id}
-
 
 @app.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task(task_id: str, token: str = Depends(verify_token)):
@@ -116,3 +113,46 @@ def worker_fail(
 def health():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+# OpenAI-compatible endpoint
+
+@app.post("/v1/embeddings", response_model=Union[OpenAIEmbeddingResponse, dict])
+async def openai_embeddings(request: OpenAIEmbeddingRequest, token: str = Depends(verify_token)):
+    """OpenAI-compatible embeddings endpoint.
+
+    Request:
+        {"input": "text to embed", "model": "nomic-embed-text"}
+
+    Response (OpenAI format):
+        {"object": "list", "data": [{"embedding": [...]}], "model": "..."}
+
+    On timeout:
+        {"id": "task-id"} - poll GET /tasks/{id} for result
+    """
+    task_id = database.create_task(request.input)
+    wait_seconds = request.wait_seconds if request.wait_seconds is not None else 10
+
+    if wait_seconds > 0:
+        max_wait = min(wait_seconds, 30)
+        deadline = time.time() + max_wait
+
+        while time.time() < deadline:
+            result = database.get_task(task_id)
+
+            if result["status"] == "completed":
+                embedding = json.loads(result["embedding"])
+                database.delete_task(task_id)
+                return OpenAIEmbeddingResponse(
+                    data=[EmbeddingData(embedding=embedding)],
+                    model=request.model or EMBEDDING_MODEL
+                )
+            elif result["status"] == "failed":
+                error_msg = result["error"] or "Unknown error"
+                database.delete_task(task_id)
+                raise HTTPException(status_code=500, detail=error_msg)
+
+            await asyncio.sleep(0.2)
+
+    # Timeout or no wait - return task ID for polling
+    return {"id": task_id}

@@ -40,8 +40,21 @@ def get_connection():
         conn.close()
 
 
+def cleanup_old_tasks() -> int:
+    """Delete tasks older than 1 hour. Returns number of deleted tasks."""
+    with get_connection() as conn:
+        result = conn.execute(
+            "DELETE FROM tasks WHERE created_at < datetime('now', '-1 hour')"
+        )
+        conn.commit()
+        return result.rowcount
+
+
 def create_task(text: str) -> str:
-    """Create a new task and return its ID."""
+    """Create a new task and return its ID. Also cleans up old tasks."""
+    # Cleanup old tasks (older than 1 hour)
+    cleanup_old_tasks()
+
     task_id = str(uuid.uuid4())
     with get_connection() as conn:
         conn.execute(
@@ -65,22 +78,32 @@ def get_task(task_id: str) -> Optional[dict]:
 
 
 def claim_next_task() -> Optional[dict]:
-    """Atomically claim the next pending task for processing."""
+    """Atomically claim the next pending task for processing.
+
+    Uses conditional UPDATE to prevent race conditions - if another worker
+    claims the task between SELECT and UPDATE, rowcount will be 0.
+    """
     with get_connection() as conn:
+        # Find a pending task
         row = conn.execute(
-            "SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at LIMIT 1"
+            "SELECT id, text FROM tasks WHERE status = 'pending' ORDER BY created_at LIMIT 1"
         ).fetchone()
 
-        if row:
-            task = dict(row)
-            conn.execute(
-                "UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?",
-                (datetime.utcnow().isoformat(), task["id"])
-            )
-            conn.commit()
-            task["status"] = "processing"
-            return task
-    return None
+        if not row:
+            return None
+
+        # Atomically claim ONLY if still pending (prevents race condition)
+        result = conn.execute(
+            "UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ? AND status = 'pending'",
+            (datetime.utcnow().isoformat(), row["id"])
+        )
+        conn.commit()
+
+        # If rowcount is 0, another worker claimed it first
+        if result.rowcount == 0:
+            return None
+
+        return {"id": row["id"], "text": row["text"], "status": "processing"}
 
 
 def complete_task(task_id: str, embedding: list[float]) -> bool:
@@ -104,6 +127,17 @@ def fail_task(task_id: str, error: str) -> bool:
                SET status = 'failed', error = ?, updated_at = ?
                WHERE id = ? AND status = 'processing'""",
             (error, datetime.utcnow().isoformat(), task_id)
+        )
+        conn.commit()
+        return result.rowcount > 0
+
+
+def delete_task(task_id: str) -> bool:
+    """Delete a task from the database."""
+    with get_connection() as conn:
+        result = conn.execute(
+            "DELETE FROM tasks WHERE id = ?",
+            (task_id,)
         )
         conn.commit()
         return result.rowcount > 0
