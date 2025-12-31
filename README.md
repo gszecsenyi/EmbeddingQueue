@@ -132,18 +132,19 @@ Edit `.env` file to customize:
 
 ```
 EmbeddingQueue/
-├── server/           # FastAPI queue server
-│   ├── main.py       # API endpoints
-│   ├── database.py   # SQLite operations
-│   ├── models.py     # Request/response models
-│   └── config.py     # Configuration
-├── worker/           # GPU worker client
-│   ├── worker.py     # Polling loop
-│   ├── embedder.py   # Ollama client
-│   └── config.py     # Configuration
+├── server/              # FastAPI queue server
+│   ├── main.py          # API endpoints
+│   ├── database.py      # SQLite operations
+│   ├── models.py        # Request/response models
+│   └── config.py        # Configuration
+├── worker/              # GPU worker client
+│   ├── worker.py        # Polling loop
+│   ├── embedder.py      # Ollama client
+│   └── config.py        # Configuration
 ├── docker-compose.yml
-├── .env              # Environment variables
-└── data/             # SQLite database (persistent)
+├── lightsail-deploy.json  # AWS Lightsail deployment
+├── .env                 # Environment variables
+└── data/                # SQLite database (persistent)
 ```
 
 ## Task States
@@ -152,3 +153,74 @@ EmbeddingQueue/
 - `processing` - Worker is generating embedding
 - `completed` - Embedding ready
 - `failed` - Error occurred (check `error` field)
+
+## AWS Lightsail Deployment
+
+Deploy the server container to AWS Lightsail for cloud hosting.
+
+### 1. Install AWS CLI
+
+```bash
+pip install awscli
+aws configure
+```
+
+### 2. Create a Lightsail container service
+
+```bash
+aws lightsail create-container-service \
+  --service-name embedding-queue \
+  --power small \
+  --scale 1
+```
+
+### 3. Build and push the server image
+
+```bash
+# Build the server image
+docker build -t embedding-queue-server ./server
+
+# Push to Lightsail
+aws lightsail push-container-image \
+  --service-name embedding-queue \
+  --label server \
+  --image embedding-queue-server
+```
+
+### 4. Deploy the container
+
+Update `lightsail-deploy.json` with the image name from step 3, then:
+
+```bash
+aws lightsail create-container-service-deployment \
+  --service-name embedding-queue \
+  --cli-input-json file://lightsail-deploy.json
+```
+
+### 5. Get the public URL
+
+```bash
+aws lightsail get-container-services --service-name embedding-queue
+```
+
+The URL will be in the format: `https://embedding-queue.xxxxx.us-east-1.cs.amazonlightsail.com`
+
+### 6. Run the worker locally
+
+Point your local worker to the Lightsail server:
+
+```bash
+SERVER_URL=https://embedding-queue.xxxxx.us-east-1.cs.amazonlightsail.com \
+AUTH_TOKEN=your-secret-token \
+docker-compose up worker ollama
+```
+
+### Lightsail Configuration
+
+Edit `lightsail-deploy.json` to customize:
+
+| Field | Description |
+|-------|-------------|
+| `serviceName` | Lightsail service name |
+| `environment.AUTH_TOKEN` | API authentication token |
+| `publicEndpoint.healthCheck` | Health check settings |
